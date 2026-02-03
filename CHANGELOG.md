@@ -9,3 +9,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Added
 
 - Initial release and basic functionality
+
+## [0.0.2]
+
+### Changed
+
+- Fixed bug in github actions (hopefully)
