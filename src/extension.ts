@@ -19,6 +19,23 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(openDisposable);
 
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider(
+            "50ohm.svgWhitePreview",
+            new SvgWhitePreviewProvider(),
+            { supportsMultipleEditorsPerDocument: true }
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openUri", async (uriString: string) => {
+            const uri = vscode.Uri.parse(uriString);
+            const doc = await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(doc, { preview: false });
+        })
+    );
+
+
     const provider: vscode.TreeDataProvider<vscode.TreeItem> = {
         getTreeItem: (element) => element,
 
@@ -160,6 +177,317 @@ export function activate(context: vscode.ExtensionContext) {
 
 
     vscode.window.registerTreeDataProvider("bookTocView", provider);
+}
+
+/**
+ * Custom Editor Provider für SVG mit weißem Hintergrund
+ */
+export class SvgWhitePreviewProvider
+    implements vscode.CustomReadonlyEditorProvider {
+
+    async openCustomDocument(
+        uri: vscode.Uri
+    ): Promise<vscode.CustomDocument> {
+        return {
+            uri,
+            dispose: () => { }
+        };
+    }
+
+    async resolveCustomEditor(
+        document: vscode.CustomDocument,
+        webviewPanel: vscode.WebviewPanel
+    ): Promise<void> {
+
+        webviewPanel.webview.options = {
+            enableScripts: false,
+            enableCommandUris: true
+        };
+
+        // ---- 1) Initiales Rendern ----
+        const render = async () => {
+            const bytes = await vscode.workspace.fs.readFile(document.uri);
+            const svgText = Buffer.from(bytes).toString("utf8");
+            const altText = await this.loadAltTextForSvg(document.uri);
+
+            const metadata = await this.loadMetadataIndex();
+            const candidates = this.extractIdCandidatesFromFilename(document.uri);
+
+            let metaHtml = `<div class="title">Metadata</div>`;
+
+            if (!metadata) {
+                metaHtml += `<p><i>metadata3b.json nicht gefunden (expected: ./contents/questions/metadata3b.json)</i></p>`;
+                webviewPanel.webview.html = this.wrap(svgText, metaHtml);
+                return;
+            }
+
+            const hits = this.findMatches(metadata, candidates);
+
+            if (hits.length === 0) {
+                metaHtml += `<p><i>Kein Treffer in metadata3b.json.</i></p>`;
+            } else {
+                metaHtml += `<div class="title">Treffer (${hits.length})</div><ul>`;
+                for (const h of hits.slice(0, 50)) {
+                    metaHtml += `<li><code>${h.questionCode}</code> – directus_id=<code>${h.directus_id}</code>, Felder: ${h.fields.map(f => `<code>${f}</code>`).join(" ")}</li>`;
+                }
+                metaHtml += `</ul>`;
+                if (hits.length > 50) metaHtml += `<p><i>… weitere Treffer ausgeblendet</i></p>`;
+            }
+
+            const sectionHits = await this.findMarkdownFilesUsingPicture(
+                "contents/sections/*.md",
+                candidates
+            );
+
+            const slideHits = await this.findMarkdownFilesUsingPicture(
+                "contents/slides/*.md",
+                candidates
+            );
+
+            metaHtml += `<div class="title">Lehrtext-Sections</div>`;
+
+            if (sectionHits.length === 0) {
+                metaHtml += `<p><i>Keine Section gefunden, die dieses Bild referenziert.</i></p>`;
+            } else {
+                metaHtml += `<ul>`;
+                for (const s of sectionHits) {
+                    const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([s.uri.toString()]))}`;
+                    metaHtml += `<li>
+      <a href="${cmd}"><code>${this.escapeHtml(s.title)}</code></a>
+      <span> (IDs: ${s.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
+    </li>`;
+                }
+                metaHtml += `</ul>`;
+            }
+
+            metaHtml += `<div class="title">Folien</div>`;
+
+            if (slideHits.length === 0) {
+                metaHtml += `<p><i>Keine Folie gefunden, die dieses Bild referenziert.</i></p>`;
+            } else {
+                metaHtml += `<ul>`;
+                for (const s of slideHits) {
+                    const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([s.uri.toString()]))}`;
+                    metaHtml += `<li>
+      <a href="${cmd}"><code>${this.escapeHtml(s.title)}</code></a>
+      <span> (IDs: ${s.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
+    </li>`;
+                }
+                metaHtml += `</ul>`;
+            }
+
+            metaHtml += `<br><div class="title">Alternativ-Text</div>`;
+
+            if (!altText) {
+                metaHtml += `<p><i>Kein Alternativ-Text gefunden.</i></p>`;
+            } else {
+                metaHtml += `<pre class="alt">${this.escapeHtml(altText)}</pre>`;
+            }
+
+            const txtUri = document.uri.with({ path: document.uri.path.replace(/\.svg$/i, ".txt") });
+            const openAltCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
+            metaHtml += `<p><a href="${openAltCmd}">Alt-Text-Datei öffnen</a></p>`;
+
+            webviewPanel.webview.html = this.wrap(svgText, metaHtml);
+        };
+
+        await render();
+
+
+        // ---- 2) Datei-Änderungen beobachten ----
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            document.uri.fsPath
+        );
+
+        watcher.onDidChange(() => render());
+        watcher.onDidCreate(() => render());
+        watcher.onDidDelete(() => {
+            webviewPanel.webview.html = `<html><body style="padding:16px">
+      <b>SVG deleted</b>
+    </body></html>`;
+        });
+
+        // ---- 3) Aufräumen, wenn Editor geschlossen wird ----
+        webviewPanel.onDidDispose(() => {
+            watcher.dispose();
+        });
+    }
+
+    private wrap(svg: string, metaHtml: string): string {
+        return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { width:100%; height:100%; margin:0; }
+    body {
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background-color: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+    }
+    .stack {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      align-items:center;
+      max-width: 95vw;
+      max-height: 95vh;
+    }
+    .page {
+      background:white;
+      padding:24px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.15);
+      max-width: 95vw;
+      max-height: 75vh;
+      overflow:auto;
+    }
+    svg { display:block; max-width:100%; max-height:100%; height:auto; width:auto; }
+
+    .meta {
+      width: min(900px, 95vw);
+      border: 1px solid var(--vscode-editorWidget-border);
+      background: var(--vscode-editorWidget-background);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .meta code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+    }
+    .meta .title { font-weight: 600; margin-bottom: 6px; }
+    .meta ul { margin: 6px 0 0 18px; padding: 0; }
+    .meta a {
+        color: var(--vscode-textLink-foreground);
+        text-decoration: none;
+    }
+    .meta a:hover {
+        text-decoration: underline;
+    }
+    pre.alt {
+        margin: 8px 0 0 0;
+        padding: 10px 12px;
+        border: 1px solid var(--vscode-editorWidget-border);
+        background: var(--vscode-textBlockQuote-background);
+        border-radius: 8px;
+        white-space: pre-wrap; /* Zeilen umbrechen */
+        word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="stack">
+    <div class="page">${svg}</div>
+    <div class="meta">${metaHtml}</div>
+  </div>
+</body>
+</html>`;
+    }
+
+    private escapeHtml(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    private async loadMetadataIndex(): Promise<Record<string, any> | null> {
+        const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+        if (!ws) return null;
+
+        const metaUri = vscode.Uri.joinPath(ws, "contents", "questions", "metadata3b.json");
+
+        try {
+            const raw = await vscode.workspace.fs.readFile(metaUri);
+            const txt = Buffer.from(raw).toString("utf8");
+            return JSON.parse(txt);
+        } catch (e) {
+            console.warn("[svgWhitePreview] metadata not found or invalid:", metaUri.fsPath, e);
+            return null;
+        }
+    }
+
+    private extractIdCandidatesFromFilename(uri: vscode.Uri): string[] {
+        const name = uri.path.split("/").pop() ?? "";
+        const stem = name.replace(/\.svg$/i, "");
+
+        // Kandidaten: kompletter Stem + alle Zahlenfolgen
+        const nums = Array.from(stem.matchAll(/\d+/g)).map(m => m[0]);
+        const candidates = new Set<string>([stem, ...nums]);
+
+        // häufig: metadata hat Numbers, aber JSON kann sie als number haben -> string reicht zum Vergleich
+        return Array.from(candidates).filter(Boolean);
+    }
+
+    private findMatches(metadata: Record<string, any>, idCandidates: string[]) {
+        const hits: Array<{
+            questionCode: string;
+            directus_id?: string;
+            fields: string[];
+        }> = [];
+
+        const fieldsToCheck = ["picture_question", "picture_a", "picture_b", "picture_c", "picture_d"];
+
+        for (const [questionCode, entry] of Object.entries(metadata)) {
+            const fields: string[] = [];
+
+            for (const f of fieldsToCheck) {
+                const v = (entry as any)[f];
+                if (v === "" || v === null || v === undefined) continue;
+
+                const vs = String(v);
+                if (idCandidates.includes(vs)) fields.push(`${f}=${vs}`);
+            }
+
+            if (fields.length > 0) {
+                hits.push({
+                    questionCode,
+                    directus_id: String((entry as any).directus_id ?? ""),
+                    fields
+                });
+            }
+        }
+
+        return hits;
+    }
+
+    private async findMarkdownFilesUsingPicture(glob: string, idCandidates: string[]) {
+        const files = await vscode.workspace.findFiles(glob);
+
+        const hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }> = [];
+        const pictureRe = /\[picture:(\d+):/g;
+
+        for (const uri of files) {
+            const raw = await vscode.workspace.fs.readFile(uri);
+            const txt = Buffer.from(raw).toString("utf8");
+
+            const mTitle = txt.match(/^#\s+(.+)$/m);
+            const title = mTitle?.[1]?.trim() ?? (uri.path.split("/").pop() ?? "md");
+
+            const found = new Set<string>();
+            for (const m of txt.matchAll(pictureRe)) found.add(m[1]);
+
+            const matchedIds = idCandidates.filter(id => found.has(id));
+            if (matchedIds.length > 0) hits.push({ uri, title, matchedIds });
+        }
+
+        hits.sort((a, b) => a.title.localeCompare(b.title));
+        return hits;
+    }
+
+    private async loadAltTextForSvg(svgUri: vscode.Uri): Promise<string | null> {
+        const txtUri = svgUri.with({ path: svgUri.path.replace(/\.svg$/i, ".txt") });
+
+        try {
+            const raw = await vscode.workspace.fs.readFile(txtUri);
+            const txt = Buffer.from(raw).toString("utf8").trim();
+            return txt.length ? txt : null;
+        } catch {
+            return null; // Datei nicht vorhanden
+        }
+    }
+
 }
 
 // This method is called when your extension is deactivated

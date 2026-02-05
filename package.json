@@ -6,15 +6,14 @@
     "engines": {
         "vscode": "^1.108.1"
     },
-    "repository" : {
+    "repository": {
         "type": "git",
         "url": "https://github.com/DARC-e-V/50ohm-vscode.git"
     },
     "categories": [
         "Other"
     ],
-    "activationEvents": [
-    ],
+    "activationEvents": [],
     "main": "./out/extension.js",
     "contributes": {
         "views": {
@@ -34,7 +33,25 @@
                     "icon": "media/50ohm.svg"
                 }
             ]
-        }
+        },
+        "customEditors": [
+            {
+                "viewType": "50ohm.svgWhitePreview",
+                "displayName": "50Ohm SVG Preview (White Background)",
+                "selector": [
+                    {
+                        "filenamePattern": "*.svg"
+                    }
+                ],
+                "priority": "default"
+            }
+        ],
+        "commands": [
+            {
+                "command": "50ohm.openUri",
+                "title": "50ohm: Open URI"
+            }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
