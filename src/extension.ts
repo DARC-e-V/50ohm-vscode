@@ -172,11 +172,307 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.window.registerTreeDataProvider("bookTocView", provider);
 
+    const svgProvider: vscode.TreeDataProvider<vscode.TreeItem> = {
+        getTreeItem: (element) => element,
+        getChildren: async () => {
+            const item = new vscode.TreeItem(
+                "Open SVG Gallery",
+                vscode.TreeItemCollapsibleState.None
+            );
+            item.iconPath = new vscode.ThemeIcon("file-media");
+            item.command = {
+                command: "50ohm.openSvgGallery",
+                title: "Open SVG Gallery",
+                arguments: []
+            };
+            return [item];
+        }
+    };
 
-    vscode.window.registerTreeDataProvider("bookTocView", provider);
+    vscode.window.registerTreeDataProvider("svgGalleryView", svgProvider);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openSvgGallery", async () => {
+            const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+            if (!ws) {
+                vscode.window.showErrorMessage("No workspace folder open.");
+                return;
+            }
+
+            // Ordner anpassen, falls bei dir anders:
+            const svgFiles = await vscode.workspace.findFiles("contents/drawings/*.svg");
+
+            // numerisch sortieren nach erster Zahl im Dateinamen
+            const sorted = svgFiles
+                .map((uri) => {
+                    const base = uri.path.split("/").pop() ?? "";
+                    const stem = base.replace(/\.svg$/i, "");
+                    const m = stem.match(/\d+/);
+                    const n = m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
+                    return { uri, base, stem, n };
+                })
+                .sort((a, b) => (a.n - b.n) || a.base.localeCompare(b.base));
+
+            const panel = vscode.window.createWebviewPanel(
+                "50ohm.svgGallery",
+                `SVG Gallery (${sorted.length})`,
+                vscode.ViewColumn.One,
+                {
+                    enableScripts: true,
+                    enableCommandUris: true,
+                    localResourceRoots: [ws] // erlaubt webview.asWebviewUri() für Dateien im Workspace
+                }
+            );
+
+            // HTML bauen
+            const cards = sorted.map((f) => {
+                const src = panel.webview.asWebviewUri(f.uri);
+                const openSvgCmd =
+                    `command:50ohm.openSvgWhitePreview?${encodeURIComponent(JSON.stringify([f.uri.toString()]))}`;
+
+                const texUri = f.uri.with({ path: f.uri.path.replace(/\.svg$/i, ".tex") });
+                const openTexCmd =
+                    `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([texUri.toString()]))}`;
+
+                const txtUri = f.uri.with({ path: f.uri.path.replace(/\.svg$/i, ".txt") });
+                const openTxtCmd =
+                    `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
 
 
-    vscode.window.registerTreeDataProvider("bookTocView", provider);
+                return `
+  <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml((f.stem + " " + f.n).toLowerCase())}">
+    <a class="thumb" href="${openSvgCmd}">
+      <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
+    </a>
+    <div class="label">
+      <code>${escapeHtml(f.stem)}</code>
+      <span class="sep">·</span>
+      <a class="tex" href="${openTexCmd}">TikZ (.tex)</a> <span class="sep">·</span> 
+      <a class="tex" href="${openTxtCmd}">Alt-Text (.txt)</a>
+    </div>
+  </div>
+`;
+            }).join("\n");
+
+            panel.webview.html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+      content="
+        default-src 'none';
+        img-src ${panel.webview.cspSource} data:;
+        style-src 'unsafe-inline';
+        script-src 'unsafe-inline';
+      " />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--vscode-editor-background);
+    color: var(--vscode-editor-foreground);
+    font-family: var(--vscode-font-family);
+  }
+
+  h1 {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  /* -------- GRID -------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+    .grid { display: grid; gap: 16px; }
+@media (min-width: 1400px) { .grid { grid-template-columns: repeat(6, 1fr); } }
+@media (min-width: 1100px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 800px)  { .grid { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 799px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
+
+  /* -------- CARD -------- */
+  .card {
+    display: block;
+    border: 1px solid var(--vscode-editorWidget-border);
+    background: var(--vscode-editorWidget-background);
+    border-radius: 12px;
+    text-decoration: none;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+  }
+
+  /* -------- SQUARE THUMB -------- */
+  .thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    background: white;
+    padding: 12px;
+    text-decoration: none;
+  }
+
+
+  .thumb img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    display: block;
+  }
+
+  /* -------- LABEL -------- */
+  .label {
+    padding: 8px 10px;
+    border-top: 1px solid var(--vscode-editorWidget-border);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  code {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+  }
+
+  .card:hover {
+    outline: 2px solid var(--vscode-focusBorder);
+    outline-offset: -2px;
+  }
+
+.sep { opacity: 0.6; }
+
+.label code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.label a.tex {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+  flex: 0 0 auto;
+}
+
+.label a.tex:hover {
+  text-decoration: underline;
+}
+
+.topbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.search {
+  flex: 1 1 320px;
+  max-width: 520px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-editorWidget-background);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+
+.count {
+  opacity: 0.75;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hidden { display: none; }
+</style>
+
+</head>
+<body>
+  <div class="topbar">
+  <div class="title">SVGs in <code>contents/drawings</code></div>
+
+  <div class="search">
+      <span style="opacity:.7">🔎</span>
+      <input id="q" type="text" placeholder="Search (e.g. 238 ...)" />
+  </div>
+
+  <div class="count"><span id="shown">${sorted.length}</span> / ${sorted.length}</div>
+  </div>
+  <hr>
+  <h1>SVGs in <code>contents/drawings</code> — click to open</h1>
+  <div class="grid">
+    ${cards}
+  </div>
+  <script>
+    const input = document.getElementById("q");
+    const cards = Array.from(document.querySelectorAll(".card"));
+    const shown = document.getElementById("shown");
+
+    function apply() {
+      const q = (input.value || "").trim().toLowerCase();
+      let n = 0;
+
+      for (const c of cards) {
+        const key = c.getAttribute("data-key") || "";
+        const ok = q === "" || key.includes(q);
+        c.classList.toggle("hidden", !ok);
+        if (ok) n++;
+      }
+      shown.textContent = String(n);
+    }
+
+    input.addEventListener("input", apply);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && document.activeElement !== input) {
+        e.preventDefault();
+        input.focus();
+      } else if (e.key === "Escape" && document.activeElement === input) {
+        input.value = "";
+        apply();
+        input.blur();
+      }
+    });
+  </script>
+</body>
+</html>`;
+        })
+    );
+
+    // mini helper irgendwo im file (außerhalb activate) hinzufügen:
+    function escapeHtml(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openSvgWhitePreview", async (uriString: string) => {
+            const uri = vscode.Uri.parse(uriString);
+            await vscode.commands.executeCommand("vscode.openWith", uri, "50ohm.svgWhitePreview");
+        })
+    );
+
 }
 
 /**
@@ -286,7 +582,13 @@ export class SvgWhitePreviewProvider
 
             const txtUri = document.uri.with({ path: document.uri.path.replace(/\.svg$/i, ".txt") });
             const openAltCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
-            metaHtml += `<p><a href="${openAltCmd}">Alt-Text-Datei öffnen</a></p>`;
+
+            const texUri = document.uri.with({ path: document.uri.path.replace(/\.svg$/i, ".tex") });
+            const openTexCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([texUri.toString()]))}`;
+
+            
+            metaHtml += `<p><a href="${openAltCmd}">Alt-Text</a> <span class="sep">·</span> `;
+            metaHtml += `<a href="${openAltCmd}">Tikz</a></p>`;
 
             webviewPanel.webview.html = this.wrap(svgText, metaHtml);
         };

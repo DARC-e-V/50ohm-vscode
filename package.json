@@ -22,6 +22,11 @@
                     "id": "bookTocView",
                     "name": "50ohm Books",
                     "icon": "media/50ohm.svg"
+                },
+                {
+                    "id": "svgGalleryView",
+                    "name": "Views",
+                    "icon": "media/50ohm.svg"
                 }
             ]
         },
@@ -50,6 +55,10 @@
             {
                 "command": "50ohm.openUri",
                 "title": "50ohm: Open URI"
+            },
+            {
+                "command": "50ohm.openSvgWhitePreview",
+                "title": "50ohm: Open SVG (White Preview)"
             }
         ]
     },
