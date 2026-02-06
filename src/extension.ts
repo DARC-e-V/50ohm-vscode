@@ -66,31 +66,33 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             );
 
-            const cards = sorted.map((f) => {
+            const cards = (await Promise.all(sorted.map(async (f) => {
                 const src = panel.webview.asWebviewUri(f.uri);
 
-                // Klick auf Bild: PNG öffnen (normaler Editor)
                 const openImgCmd =
                     `command:50ohm.openPngWhitePreview?${encodeURIComponent(JSON.stringify([f.uri.toString()]))}`;
 
-                // Alt-Text daneben: 123.txt
                 const txtUri = f.uri.with({ path: f.uri.path.replace(/\.png$/i, ".txt") });
                 const openTxtCmd =
                     `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
 
+                const altText = await readTextIfExists(txtUri, 8000);
+                const searchKey = normalizeForSearch(`${f.stem} ${f.n} ${altText}`);
+
                 return `
-  <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml((f.stem + " " + f.n).toLowerCase())}">
-    <a class="thumb" href="${openImgCmd}">
-      <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
-    </a>
-    <div class="label">
-      <code>${escapeHtml(f.stem)}</code>
-      <span class="sep">·</span>
-      <a class="tex" href="${openTxtCmd}">Alt-Text</a>
+    <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml(searchKey)}">
+      <a class="thumb" href="${openImgCmd}">
+        <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
+      </a>
+      <div class="label">
+        <code>${escapeHtml(f.stem)}</code>
+        <span class="sep">·</span>
+        <a class="tex" href="${openTxtCmd}">Alt-Text</a>
+      </div>
     </div>
-  </div>
-`;
-            }).join("\n");
+  `;
+            }))).join("\n");
+
 
             panel.webview.html = `<!doctype html>
 <html>
@@ -470,34 +472,43 @@ export function activate(context: vscode.ExtensionContext) {
             );
 
             // HTML bauen
-            const cards = sorted.map((f) => {
+            const cards = (await Promise.all(sorted.map(async (f) => {
                 const src = panel.webview.asWebviewUri(f.uri);
+
                 const openSvgCmd =
                     `command:50ohm.openSvgWhitePreview?${encodeURIComponent(JSON.stringify([f.uri.toString()]))}`;
 
                 const texUri = f.uri.with({ path: f.uri.path.replace(/\.svg$/i, ".tex") });
+                const txtUri = f.uri.with({ path: f.uri.path.replace(/\.svg$/i, ".txt") });
+
                 const openTexCmd =
                     `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([texUri.toString()]))}`;
 
-                const txtUri = f.uri.with({ path: f.uri.path.replace(/\.svg$/i, ".txt") });
                 const openTxtCmd =
                     `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
 
+                // NEU: Alt-Text + TikZ in den Suchkey aufnehmen
+                const altText = await readTextIfExists(txtUri, 8000);
+                const tikz = await readTextIfExists(texUri, 20000);
+
+                const searchKey = normalizeForSearch(`${f.stem} ${f.n} ${altText} ${tikz}`);
 
                 return `
-  <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml((f.stem + " " + f.n).toLowerCase())}">
-    <a class="thumb" href="${openSvgCmd}">
-      <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
-    </a>
-    <div class="label">
-      <code>${escapeHtml(f.stem)}</code>
-      <span class="sep">·</span>
-      <a class="tex" href="${openTxtCmd}">Alt-Text</a> <span class="sep">·</span> 
-      <a class="tex" href="${openTexCmd}">TikZ</a>
+    <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml(searchKey)}">
+      <a class="thumb" href="${openSvgCmd}">
+        <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
+      </a>
+      <div class="label">
+        <code>${escapeHtml(f.stem)}</code>
+        <span class="sep">·</span>
+        <a class="tex" href="${openTxtCmd}">Alt-Text</a>
+        <span class="sep">·</span>
+        <a class="tex" href="${openTexCmd}">TikZ</a>
+      </div>
     </div>
-  </div>
-`;
-            }).join("\n");
+  `;
+            }))).join("\n");
+
 
             panel.webview.html = `<!doctype html>
 <html>
@@ -1030,82 +1041,82 @@ export class SvgWhitePreviewProvider
 
 export class PngWhitePreviewProvider implements vscode.CustomReadonlyEditorProvider {
 
-  async openCustomDocument(uri: vscode.Uri): Promise<vscode.CustomDocument> {
-    return { uri, dispose: () => {} };
-  }
+    async openCustomDocument(uri: vscode.Uri): Promise<vscode.CustomDocument> {
+        return { uri, dispose: () => { } };
+    }
 
-  async resolveCustomEditor(
-    document: vscode.CustomDocument,
-    webviewPanel: vscode.WebviewPanel
-  ): Promise<void> {
+    async resolveCustomEditor(
+        document: vscode.CustomDocument,
+        webviewPanel: vscode.WebviewPanel
+    ): Promise<void> {
 
-    const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
 
-    webviewPanel.webview.options = {
-      enableScripts: false,
-      enableCommandUris: true,
-      localResourceRoots: ws ? [ws] : undefined
-    };
+        webviewPanel.webview.options = {
+            enableScripts: false,
+            enableCommandUris: true,
+            localResourceRoots: ws ? [ws] : undefined
+        };
 
-    const render = async () => {
-      const imgSrc = webviewPanel.webview.asWebviewUri(document.uri);
-      const candidates = this.extractIdCandidatesFromFilename(document.uri); // 123.png -> ["123", ...]
-      const altText = await this.loadAltTextForPng(document.uri);
+        const render = async () => {
+            const imgSrc = webviewPanel.webview.asWebviewUri(document.uri);
+            const candidates = this.extractIdCandidatesFromFilename(document.uri); // 123.png -> ["123", ...]
+            const altText = await this.loadAltTextForPng(document.uri);
 
-      const sectionHits = await this.findMarkdownFilesUsingPicture(
-        "contents/sections/*.md",
-        candidates
-      );
+            const sectionHits = await this.findMarkdownFilesUsingPicture(
+                "contents/sections/*.md",
+                candidates
+            );
 
-      const slideHits = await this.findMarkdownFilesUsingPicture(
-        "contents/slides/*.md",
-        candidates
-      );
+            const slideHits = await this.findMarkdownFilesUsingPicture(
+                "contents/slides/*.md",
+                candidates
+            );
 
-      // Meta HTML bauen
-      let metaHtml = `<div class="title">Verwendung</div>`;
+            // Meta HTML bauen
+            let metaHtml = `<div class="title">Verwendung</div>`;
 
-      metaHtml += `<div class="title">Lehrtext-Sections</div>`;
-      metaHtml += this.renderHitsList(sectionHits);
+            metaHtml += `<div class="title">Lehrtext-Sections</div>`;
+            metaHtml += this.renderHitsList(sectionHits);
 
-      metaHtml += `<div class="title">Folien</div>`;
-      metaHtml += this.renderHitsList(slideHits);
+            metaHtml += `<div class="title">Folien</div>`;
+            metaHtml += this.renderHitsList(slideHits);
 
-      metaHtml += `<div class="title">Alternativ-Text</div>`;
-      if (!altText) {
-        metaHtml += `<p><i>Kein Alternativ-Text gefunden.</i></p>`;
-      } else {
-        metaHtml += `<pre class="alt">${this.escapeHtml(altText)}</pre>`;
-      }
+            metaHtml += `<div class="title">Alternativ-Text</div>`;
+            if (!altText) {
+                metaHtml += `<p><i>Kein Alternativ-Text gefunden.</i></p>`;
+            } else {
+                metaHtml += `<pre class="alt">${this.escapeHtml(altText)}</pre>`;
+            }
 
-      const txtUri = document.uri.with({ path: document.uri.path.replace(/\.png$/i, ".txt") });
-      const openAltCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
-      metaHtml += `<p><a href="${openAltCmd}">Alt-Text-Datei öffnen</a></p>`;
+            const txtUri = document.uri.with({ path: document.uri.path.replace(/\.png$/i, ".txt") });
+            const openAltCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
+            metaHtml += `<p><a href="${openAltCmd}">Alt-Text-Datei öffnen</a></p>`;
 
-      webviewPanel.webview.html = this.wrap(imgSrc.toString(), metaHtml);
-    };
+            webviewPanel.webview.html = this.wrap(imgSrc.toString(), metaHtml);
+        };
 
-    await render();
+        await render();
 
-    // watcher: PNG + TXT (damit Alt-Text Updates sofort sichtbar sind)
-    const watcherPng = vscode.workspace.createFileSystemWatcher(document.uri.fsPath);
-    const txtPath = document.uri.fsPath.replace(/\.png$/i, ".txt");
-    const watcherTxt = vscode.workspace.createFileSystemWatcher(txtPath);
+        // watcher: PNG + TXT (damit Alt-Text Updates sofort sichtbar sind)
+        const watcherPng = vscode.workspace.createFileSystemWatcher(document.uri.fsPath);
+        const txtPath = document.uri.fsPath.replace(/\.png$/i, ".txt");
+        const watcherTxt = vscode.workspace.createFileSystemWatcher(txtPath);
 
-    watcherPng.onDidChange(() => render());
-    watcherTxt.onDidChange(() => render());
+        watcherPng.onDidChange(() => render());
+        watcherTxt.onDidChange(() => render());
 
-    webviewPanel.onDidDispose(() => {
-      watcherPng.dispose();
-      watcherTxt.dispose();
-    });
-  }
+        webviewPanel.onDidDispose(() => {
+            watcherPng.dispose();
+            watcherTxt.dispose();
+        });
+    }
 
-  // ---------- Rendering helpers ----------
+    // ---------- Rendering helpers ----------
 
-  private wrap(imgUrl: string, metaHtml: string): string {
-    // CSP: wir nutzen nur img+style inline, scripts sind aus
-    return `<!doctype html>
+    private wrap(imgUrl: string, metaHtml: string): string {
+        // CSP: wir nutzen nur img+style inline, scripts sind aus
+        return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -1179,70 +1190,70 @@ export class PngWhitePreviewProvider implements vscode.CustomReadonlyEditorProvi
   </div>
 </body>
 </html>`;
-  }
+    }
 
-  private renderHitsList(hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }>): string {
-    if (!hits.length) return `<p><i>Keine Treffer.</i></p>`;
+    private renderHitsList(hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }>): string {
+        if (!hits.length) return `<p><i>Keine Treffer.</i></p>`;
 
-    let html = `<ul>`;
-    for (const h of hits) {
-      const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([h.uri.toString()]))}`;
-      html += `<li>
+        let html = `<ul>`;
+        for (const h of hits) {
+            const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([h.uri.toString()]))}`;
+            html += `<li>
         <a href="${cmd}"><code>${this.escapeHtml(h.title)}</code></a>
         <span> (IDs: ${h.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
       </li>`;
-    }
-    html += `</ul>`;
-    return html;
-  }
-
-  // ---------- Data helpers ----------
-
-  private extractIdCandidatesFromFilename(uri: vscode.Uri): string[] {
-    const name = uri.path.split("/").pop() ?? "";
-    const stem = name.replace(/\.png$/i, "");
-    const nums = Array.from(stem.matchAll(/\d+/g)).map(m => m[0]);
-    const candidates = new Set<string>([stem, ...nums]);
-    return Array.from(candidates).filter(Boolean);
-  }
-
-  private async findMarkdownFilesUsingPicture(glob: string, idCandidates: string[]) {
-    const files = await vscode.workspace.findFiles(glob);
-    const hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }> = [];
-    const pictureRe = /\[photo:(\d+):/g;
-
-    for (const uri of files) {
-      const raw = await vscode.workspace.fs.readFile(uri);
-      const txt = Buffer.from(raw).toString("utf8");
-
-      const mTitle = txt.match(/^#\s+(.+)$/m);
-      const title = mTitle?.[1]?.trim() ?? (uri.path.split("/").pop() ?? "md");
-
-      const found = new Set<string>();
-      for (const m of txt.matchAll(pictureRe)) found.add(m[1]);
-
-      const matchedIds = idCandidates.filter(id => found.has(id));
-      if (matchedIds.length > 0) hits.push({ uri, title, matchedIds });
+        }
+        html += `</ul>`;
+        return html;
     }
 
-    hits.sort((a, b) => a.title.localeCompare(b.title));
-    return hits;
-  }
+    // ---------- Data helpers ----------
 
-  private async loadAltTextForPng(pngUri: vscode.Uri): Promise<string | null> {
-    const txtUri = pngUri.with({ path: pngUri.path.replace(/\.png$/i, ".txt") });
-    try {
-      const raw = await vscode.workspace.fs.readFile(txtUri);
-      const txt = Buffer.from(raw).toString("utf8").trim();
-      return txt.length ? txt : null;
-    } catch {
-      return null;
+    private extractIdCandidatesFromFilename(uri: vscode.Uri): string[] {
+        const name = uri.path.split("/").pop() ?? "";
+        const stem = name.replace(/\.png$/i, "");
+        const nums = Array.from(stem.matchAll(/\d+/g)).map(m => m[0]);
+        const candidates = new Set<string>([stem, ...nums]);
+        return Array.from(candidates).filter(Boolean);
     }
-  }
 
-  private escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
+    private async findMarkdownFilesUsingPicture(glob: string, idCandidates: string[]) {
+        const files = await vscode.workspace.findFiles(glob);
+        const hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }> = [];
+        const pictureRe = /\[photo:(\d+):/g;
+
+        for (const uri of files) {
+            const raw = await vscode.workspace.fs.readFile(uri);
+            const txt = Buffer.from(raw).toString("utf8");
+
+            const mTitle = txt.match(/^#\s+(.+)$/m);
+            const title = mTitle?.[1]?.trim() ?? (uri.path.split("/").pop() ?? "md");
+
+            const found = new Set<string>();
+            for (const m of txt.matchAll(pictureRe)) found.add(m[1]);
+
+            const matchedIds = idCandidates.filter(id => found.has(id));
+            if (matchedIds.length > 0) hits.push({ uri, title, matchedIds });
+        }
+
+        hits.sort((a, b) => a.title.localeCompare(b.title));
+        return hits;
+    }
+
+    private async loadAltTextForPng(pngUri: vscode.Uri): Promise<string | null> {
+        const txtUri = pngUri.with({ path: pngUri.path.replace(/\.png$/i, ".txt") });
+        try {
+            const raw = await vscode.workspace.fs.readFile(txtUri);
+            const txt = Buffer.from(raw).toString("utf8").trim();
+            return txt.length ? txt : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private escapeHtml(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
 }
 
 
@@ -1252,4 +1263,22 @@ export function deactivate() { }
 
 function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function readTextIfExists(uri: vscode.Uri, maxChars = 20000): Promise<string> {
+    try {
+        const raw = await vscode.workspace.fs.readFile(uri);
+        const txt = Buffer.from(raw).toString("utf8");
+        return txt.length > maxChars ? txt.slice(0, maxChars) : txt;
+    } catch {
+        return "";
+    }
+}
+
+function normalizeForSearch(s: string): string {
+    // Lowercase + bisschen Whitespace glätten
+    return (s || "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
 }
