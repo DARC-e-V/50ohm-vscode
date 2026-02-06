@@ -2,7 +2,7 @@
     "name": "50ohm",
     "displayName": "50ohm Editor",
     "description": "Plugin to Edit 50ohm Contents",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "engines": {
         "vscode": "^1.108.1"
     },
@@ -14,7 +14,7 @@
         "Other"
     ],
     "activationEvents": [
-        "onCommand:50ohm.openSvgGallery"
+        "*"
     ],
     "main": "./out/extension.js",
     "contributes": {
