@@ -10,20 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: darwin-arm64
-          - os: macos-latest
-            target: darwin-x64
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: windows-latest
-            target: win32-x64
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -39,20 +26,15 @@ jobs:
         run: npm ci
 
       - name: Set version from tag
-        shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "Setting version to $TAG"
-          npm version "$TAG" --no-git-tag-version --allow-same-version
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "Setting version to $TAG"
+            npm version "$TAG" --no-git-tag-version --allow-same-version
 
-      # Wichtig: Sharp native muss auf DER Plattform installiert/gebaut werden
-      - name: Rebuild sharp (native)
-        run: npm rebuild sharp --verbose
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce package
 
-      - name: Package VSIX (platform-specific)
-        run: npx --yes @vscode/vsce package --target ${{ matrix.target }}
-
-      - name: Upload VSIX to GitHub Release
+      - name: Create GitHub Release and upload VSIX
         uses: softprops/action-gh-release@v2
         with:
           files: "*.vsix"
