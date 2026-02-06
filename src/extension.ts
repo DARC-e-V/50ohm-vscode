@@ -2,8 +2,6 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-import sharp from "sharp";
-
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -727,13 +725,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-        vscode.languages.registerHoverProvider(
-            { language: "markdown", scheme: "file" },
-            new DarcdownHoverProvider()
-        )
-    );
-
-    context.subscriptions.push(
         vscode.languages.registerDocumentLinkProvider(
             { language: "markdown", scheme: "file" },
             new DarcdownLinkProvider()
@@ -1271,63 +1262,6 @@ export class PngWhitePreviewProvider implements vscode.CustomReadonlyEditorProvi
     }
 }
 
-class DarcdownHoverProvider implements vscode.HoverProvider {
-
-    async provideHover(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> {
-        const line = document.lineAt(position.line).text;
-
-        const re = /\[(picture|photo):(\d+):[^\]]*\]/g;
-        let m: RegExpExecArray | null;
-
-        while ((m = re.exec(line)) !== null) {
-            const start = m.index;
-            const end = m.index + m[0].length;
-            if (position.character < start || position.character > end) continue;
-
-            const kind = m[1] as "picture" | "photo";
-            const id = m[2];
-
-            const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
-            if (!ws) return;
-
-            const assetUri =
-                kind === "picture"
-                    ? vscode.Uri.joinPath(ws, "contents", "drawings", `${id}.svg`)
-                    : vscode.Uri.joinPath(ws, "contents", "photos", `${id}.png`);
-
-            try {
-                await vscode.workspace.fs.stat(assetUri);
-            } catch {
-                const md = new vscode.MarkdownString(`**${kind}:${id}**\n\n*(file not found)*`);
-                return new vscode.Hover(md, new vscode.Range(position.line, start, position.line, end));
-            }
-
-            const dataUrl = await makeHoverThumbDataUrl(kind, assetUri);
-
-            const md = new vscode.MarkdownString();
-            md.isTrusted = true;
-            md.supportHtml = true;
-
-            if (dataUrl) {
-                const bg = kind === "picture" ? "white" : "transparent";
-                md.appendMarkdown(`
-<div style="background:${bg}; padding:6px; border-radius:6px; display:inline-block">
-  <img src="${dataUrl}" style="max-width:360px; max-height:220px; display:block" />
-</div>
-`);
-            } else {
-                md.appendMarkdown(`*(preview could not be generated)*\n\n`);
-            }
-
-            return new vscode.Hover(md, new vscode.Range(position.line, start, position.line, end));
-
-        }
-
-        return;
-    }
-}
-
-
 class DarcdownLinkProvider implements vscode.DocumentLinkProvider {
     provideDocumentLinks(document: vscode.TextDocument): vscode.DocumentLink[] {
         const links: vscode.DocumentLink[] = [];
@@ -1402,67 +1336,4 @@ function normalizeForSearch(s: string): string {
         .replace(/\s+/g, " ")
         .trim();
 }
-
-
-// ---------- Hover thumbnail cache (disk + memory) ----------
-
-type ThumbKind = "picture" | "photo";
-
-const HOVER_W = 360;
-const HOVER_H = 220;
-
-async function makeHoverThumbDataUrl(kind: ThumbKind, assetUri: vscode.Uri): Promise<string | null> {
-    const raw = await vscode.workspace.fs.readFile(assetUri);
-    const buf = Buffer.from(raw);
-
-    try {
-        const base =
-            kind === "picture"
-                ? sharp(buf, { density: 220 }).flatten({ background: "#ffffff" })
-                : sharp(buf, { failOn: "none" });
-
-        // VS Code Hover ist empfindlich auf *String-Länge* (data: URL).
-        // Diese Grenzen sind bewusst streng, damit auch “Problemfälle” (z.B. 86.png) gehen.
-        const MAX_DATAURL_CHARS = 60_000; 
-        const attempts: Array<{ w: number; q: number }> = [
-            { w: HOVER_W, q: 95 },
-            { w: HOVER_W, q: 90 },
-            { w: HOVER_W, q: 80 },
-            { w: HOVER_W, q: 70 },
-            { w: HOVER_W, q: 60 },
-            { w: HOVER_W, q: 50 },
-        ];
-
-        for (const a of attempts) {
-            let out = await base
-                .clone()
-                .resize({
-                    width: Math.min(a.w, HOVER_W),
-                    height: HOVER_H,
-                    fit: "contain",
-                    background: kind === "picture" ? "#ffffff" : { r: 0, g: 0, b: 0, alpha: 0 },
-                    withoutEnlargement: true
-                })
-                .jpeg({ quality: a.q, mozjpeg: true })
-                .toBuffer();
-
-            // Zusätzlich: Byte-Limit (für Sicherheit)
-            if (out.length > 35_000) continue;
-
-            const dataUrl = `data:image/jpeg;base64,${out.toString("base64")}`;
-
-            // DAS ist der entscheidende Check gegen “Hover wird einfach leer”
-            if (dataUrl.length <= MAX_DATAURL_CHARS) {
-                console.log("[50ohm hover] ", dataUrl.length);
-                return dataUrl;
-            }
-        }
-
-        return null;
-    } catch (e) {
-        console.warn("[50ohm hover] thumb failed:", assetUri.fsPath, e);
-        return null;
-    }
-}
-
 
