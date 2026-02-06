@@ -2,7 +2,7 @@
     "name": "50ohm",
     "displayName": "50ohm Editor",
     "description": "Plugin to Edit 50ohm Contents",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "engines": {
         "vscode": "^1.108.1"
     },
@@ -102,15 +102,11 @@
     "devDependencies": {
         "@types/mocha": "^10.0.10",
         "@types/node": "22.x",
-        "@types/sharp": "^0.31.1",
         "@types/vscode": "^1.108.1",
         "@vscode/test-cli": "^0.0.11",
         "@vscode/test-electron": "^2.5.2",
         "eslint": "^9.39.2",
         "typescript": "^5.9.3",
         "typescript-eslint": "^8.52.0"
-    },
-    "dependencies": {
-        "sharp": "^0.34.5"
     }
 }
