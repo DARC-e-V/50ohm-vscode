@@ -35,6 +35,245 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openPhotoGallery", async () => {
+            const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+            if (!ws) {
+                vscode.window.showErrorMessage("No workspace folder open.");
+                return;
+            }
+
+            const pngFiles = await vscode.workspace.findFiles("contents/photos/*.png");
+
+            const sorted = pngFiles
+                .map((uri) => {
+                    const base = uri.path.split("/").pop() ?? "";
+                    const stem = base.replace(/\.png$/i, "");
+                    const m = stem.match(/\d+/);
+                    const n = m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
+                    return { uri, base, stem, n };
+                })
+                .sort((a, b) => (a.n - b.n) || a.base.localeCompare(b.base));
+
+            const panel = vscode.window.createWebviewPanel(
+                "50ohm.photoGallery",
+                `Photo Gallery (${sorted.length})`,
+                vscode.ViewColumn.One,
+                {
+                    enableScripts: true,
+                    enableCommandUris: true,
+                    localResourceRoots: [ws]
+                }
+            );
+
+            const cards = sorted.map((f) => {
+                const src = panel.webview.asWebviewUri(f.uri);
+
+                // Klick auf Bild: PNG öffnen (normaler Editor)
+                const openImgCmd =
+                    `command:50ohm.openPngWhitePreview?${encodeURIComponent(JSON.stringify([f.uri.toString()]))}`;
+
+                // Alt-Text daneben: 123.txt
+                const txtUri = f.uri.with({ path: f.uri.path.replace(/\.png$/i, ".txt") });
+                const openTxtCmd =
+                    `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
+
+                return `
+  <div class="card" title="${escapeHtml(f.base)}" data-key="${escapeHtml((f.stem + " " + f.n).toLowerCase())}">
+    <a class="thumb" href="${openImgCmd}">
+      <img src="${src}" alt="${escapeHtml(f.stem)}" loading="lazy" />
+    </a>
+    <div class="label">
+      <code>${escapeHtml(f.stem)}</code>
+      <span class="sep">·</span>
+      <a class="tex" href="${openTxtCmd}">Alt-Text</a>
+    </div>
+  </div>
+`;
+            }).join("\n");
+
+            panel.webview.html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+      content="
+        default-src 'none';
+        img-src ${panel.webview.cspSource} data:;
+        style-src 'unsafe-inline';
+        script-src 'unsafe-inline';
+      " />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      background: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+    }
+
+    .topbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .title { font-size: 14px; font-weight: 600; }
+
+    .search {
+      flex: 1 1 320px;
+      max-width: 520px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--vscode-editorWidget-border);
+      background: var(--vscode-editorWidget-background);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+
+    .search input {
+      width: 100%;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+      font-size: 13px;
+    }
+
+    .count { opacity: 0.75; font-size: 12px; white-space: nowrap; }
+
+    .grid { display: grid; gap: 16px; }
+    @media (min-width: 1400px) { .grid { grid-template-columns: repeat(6, 1fr); } }
+    @media (min-width: 1100px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+    @media (min-width: 800px)  { .grid { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 799px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .card {
+      border: 1px solid var(--vscode-editorWidget-border);
+      background: var(--vscode-editorWidget-background);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+    }
+
+    /* Bei Fotos kein weißer “Papier”-Hintergrund nötig,
+       aber wenn du willst: background:white; */
+    .thumb {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1 / 1;
+      background: var(--vscode-editorWidget-background);
+      padding: 6px;
+      text-decoration: none;
+    }
+
+    .thumb img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .label {
+      padding: 8px 10px;
+      border-top: 1px solid var(--vscode-editorWidget-border);
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .sep { opacity: 0.6; }
+
+    code {
+      font-family: var(--vscode-editor-font-family);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .label a.tex {
+      color: var(--vscode-textLink-foreground);
+      text-decoration: none;
+      flex: 0 0 auto;
+      font-size: 12px;
+    }
+    .label a.tex:hover { text-decoration: underline; }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">Photos in <code>contents/photos</code></div>
+    <div class="search">
+      <span style="opacity:.7">🔎</span>
+      <input id="q" type="text" placeholder="Search (e.g. 123 ...)" />
+    </div>
+    <div class="count"><span id="shown">${sorted.length}</span> / ${sorted.length}</div>
+  </div>
+
+  <div class="grid">
+    ${cards}
+  </div>
+
+  <script>
+    const input = document.getElementById("q");
+    const cards = Array.from(document.querySelectorAll(".card"));
+    const shown = document.getElementById("shown");
+
+    function apply() {
+      const q = (input.value || "").trim().toLowerCase();
+      let n = 0;
+      for (const c of cards) {
+        const key = c.getAttribute("data-key") || "";
+        const ok = q === "" || key.includes(q);
+        c.classList.toggle("hidden", !ok);
+        if (ok) n++;
+      }
+      shown.textContent = String(n);
+    }
+
+    input.addEventListener("input", apply);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && document.activeElement !== input) {
+        e.preventDefault();
+        input.focus();
+      } else if (e.key === "Escape" && document.activeElement === input) {
+        input.value = "";
+        apply();
+        input.blur();
+      }
+    });
+  </script>
+</body>
+</html>`;
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider(
+            "50ohm.pngWhitePreview",
+            new PngWhitePreviewProvider(),
+            { supportsMultipleEditorsPerDocument: true }
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openPngWhitePreview", async (uriString: string) => {
+            const uri = vscode.Uri.parse(uriString);
+            await vscode.commands.executeCommand("vscode.openWith", uri, "50ohm.pngWhitePreview");
+        })
+    );
 
     const provider: vscode.TreeDataProvider<vscode.TreeItem> = {
         getTreeItem: (element) => element,
@@ -175,17 +414,23 @@ export function activate(context: vscode.ExtensionContext) {
     const svgProvider: vscode.TreeDataProvider<vscode.TreeItem> = {
         getTreeItem: (element) => element,
         getChildren: async () => {
-            const item = new vscode.TreeItem(
-                "Open SVG Gallery",
-                vscode.TreeItemCollapsibleState.None
-            );
-            item.iconPath = new vscode.ThemeIcon("file-media");
-            item.command = {
+            const svgItem = new vscode.TreeItem("Open SVG Gallery", vscode.TreeItemCollapsibleState.None);
+            svgItem.iconPath = new vscode.ThemeIcon("file-media");
+            svgItem.command = {
                 command: "50ohm.openSvgGallery",
                 title: "Open SVG Gallery",
                 arguments: []
             };
-            return [item];
+
+            const photoItem = new vscode.TreeItem("Open Photo Gallery", vscode.TreeItemCollapsibleState.None);
+            photoItem.iconPath = new vscode.ThemeIcon("file-media");
+            photoItem.command = {
+                command: "50ohm.openPhotoGallery",
+                title: "Open Photo Gallery",
+                arguments: []
+            };
+
+            return [svgItem, photoItem];
         }
     };
 
@@ -247,8 +492,8 @@ export function activate(context: vscode.ExtensionContext) {
     <div class="label">
       <code>${escapeHtml(f.stem)}</code>
       <span class="sep">·</span>
-      <a class="tex" href="${openTexCmd}">TikZ (.tex)</a> <span class="sep">·</span> 
-      <a class="tex" href="${openTxtCmd}">Alt-Text (.txt)</a>
+      <a class="tex" href="${openTxtCmd}">Alt-Text</a> <span class="sep">·</span> 
+      <a class="tex" href="${openTexCmd}">TikZ</a>
     </div>
   </div>
 `;
@@ -461,11 +706,6 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // mini helper irgendwo im file (außerhalb activate) hinzufügen:
-    function escapeHtml(s: string): string {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
     context.subscriptions.push(
         vscode.commands.registerCommand("50ohm.openSvgWhitePreview", async (uriString: string) => {
             const uri = vscode.Uri.parse(uriString);
@@ -549,7 +789,7 @@ export class SvgWhitePreviewProvider
                 for (const s of sectionHits) {
                     const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([s.uri.toString()]))}`;
                     metaHtml += `<li>
-      <a href="${cmd}"><code>${this.escapeHtml(s.title)}</code></a>
+      <a href="${cmd}"><code>${escapeHtml(s.title)}</code></a>
       <span> (IDs: ${s.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
     </li>`;
                 }
@@ -565,7 +805,7 @@ export class SvgWhitePreviewProvider
                 for (const s of slideHits) {
                     const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([s.uri.toString()]))}`;
                     metaHtml += `<li>
-      <a href="${cmd}"><code>${this.escapeHtml(s.title)}</code></a>
+      <a href="${cmd}"><code>${escapeHtml(s.title)}</code></a>
       <span> (IDs: ${s.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
     </li>`;
                 }
@@ -577,7 +817,7 @@ export class SvgWhitePreviewProvider
             if (!altText) {
                 metaHtml += `<p><i>Kein Alternativ-Text gefunden.</i></p>`;
             } else {
-                metaHtml += `<pre class="alt">${this.escapeHtml(altText)}</pre>`;
+                metaHtml += `<pre class="alt">${escapeHtml(altText)}</pre>`;
             }
 
             const txtUri = document.uri.with({ path: document.uri.path.replace(/\.svg$/i, ".txt") });
@@ -586,9 +826,9 @@ export class SvgWhitePreviewProvider
             const texUri = document.uri.with({ path: document.uri.path.replace(/\.svg$/i, ".tex") });
             const openTexCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([texUri.toString()]))}`;
 
-            
+
             metaHtml += `<p><a href="${openAltCmd}">Alt-Text</a> <span class="sep">·</span> `;
-            metaHtml += `<a href="${openAltCmd}">Tikz</a></p>`;
+            metaHtml += `<a href="${openTexCmd}">Tikz</a></p>`;
 
             webviewPanel.webview.html = this.wrap(svgText, metaHtml);
         };
@@ -690,10 +930,6 @@ export class SvgWhitePreviewProvider
 </html>`;
     }
 
-    private escapeHtml(s: string): string {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
     private async loadMetadataIndex(): Promise<Record<string, any> | null> {
         const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
         if (!ws) return null;
@@ -792,5 +1028,228 @@ export class SvgWhitePreviewProvider
 
 }
 
+export class PngWhitePreviewProvider implements vscode.CustomReadonlyEditorProvider {
+
+  async openCustomDocument(uri: vscode.Uri): Promise<vscode.CustomDocument> {
+    return { uri, dispose: () => {} };
+  }
+
+  async resolveCustomEditor(
+    document: vscode.CustomDocument,
+    webviewPanel: vscode.WebviewPanel
+  ): Promise<void> {
+
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+
+    webviewPanel.webview.options = {
+      enableScripts: false,
+      enableCommandUris: true,
+      localResourceRoots: ws ? [ws] : undefined
+    };
+
+    const render = async () => {
+      const imgSrc = webviewPanel.webview.asWebviewUri(document.uri);
+      const candidates = this.extractIdCandidatesFromFilename(document.uri); // 123.png -> ["123", ...]
+      const altText = await this.loadAltTextForPng(document.uri);
+
+      const sectionHits = await this.findMarkdownFilesUsingPicture(
+        "contents/sections/*.md",
+        candidates
+      );
+
+      const slideHits = await this.findMarkdownFilesUsingPicture(
+        "contents/slides/*.md",
+        candidates
+      );
+
+      // Meta HTML bauen
+      let metaHtml = `<div class="title">Verwendung</div>`;
+
+      metaHtml += `<div class="title">Lehrtext-Sections</div>`;
+      metaHtml += this.renderHitsList(sectionHits);
+
+      metaHtml += `<div class="title">Folien</div>`;
+      metaHtml += this.renderHitsList(slideHits);
+
+      metaHtml += `<div class="title">Alternativ-Text</div>`;
+      if (!altText) {
+        metaHtml += `<p><i>Kein Alternativ-Text gefunden.</i></p>`;
+      } else {
+        metaHtml += `<pre class="alt">${this.escapeHtml(altText)}</pre>`;
+      }
+
+      const txtUri = document.uri.with({ path: document.uri.path.replace(/\.png$/i, ".txt") });
+      const openAltCmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([txtUri.toString()]))}`;
+      metaHtml += `<p><a href="${openAltCmd}">Alt-Text-Datei öffnen</a></p>`;
+
+      webviewPanel.webview.html = this.wrap(imgSrc.toString(), metaHtml);
+    };
+
+    await render();
+
+    // watcher: PNG + TXT (damit Alt-Text Updates sofort sichtbar sind)
+    const watcherPng = vscode.workspace.createFileSystemWatcher(document.uri.fsPath);
+    const txtPath = document.uri.fsPath.replace(/\.png$/i, ".txt");
+    const watcherTxt = vscode.workspace.createFileSystemWatcher(txtPath);
+
+    watcherPng.onDidChange(() => render());
+    watcherTxt.onDidChange(() => render());
+
+    webviewPanel.onDidDispose(() => {
+      watcherPng.dispose();
+      watcherTxt.dispose();
+    });
+  }
+
+  // ---------- Rendering helpers ----------
+
+  private wrap(imgUrl: string, metaHtml: string): string {
+    // CSP: wir nutzen nur img+style inline, scripts sind aus
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src https: data: ${'${'}webview.cspSource${'}'}; style-src 'unsafe-inline';" />
+  <style>
+    html, body { width:100%; height:100%; margin:0; }
+    body {
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background-color: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+    }
+    .stack {
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      align-items:center;
+      max-width: 95vw;
+      max-height: 95vh;
+    }
+    .page {
+      background:white;
+      padding:24px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.15);
+      max-width: 95vw;
+      max-height: 75vh;
+      overflow:auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .page img {
+      display:block;
+      max-width: 100%;
+      max-height: 100%;
+      height: auto;
+      width: auto;
+    }
+
+    .meta {
+      width: min(900px, 95vw);
+      border: 1px solid var(--vscode-editorWidget-border);
+      background: var(--vscode-editorWidget-background);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .meta .title { font-weight: 600; margin: 10px 0 6px 0; }
+    .meta ul { margin: 6px 0 0 18px; padding: 0; }
+    .meta a { color: var(--vscode-textLink-foreground); text-decoration: none; }
+    .meta a:hover { text-decoration: underline; }
+    pre.alt {
+      margin: 8px 0 0 0;
+      padding: 10px 12px;
+      border: 1px solid var(--vscode-editorWidget-border);
+      background: var(--vscode-textBlockQuote-background);
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="stack">
+    <div class="page"><img src="${imgUrl}" alt="image"/></div>
+    <div class="meta">${metaHtml}</div>
+  </div>
+</body>
+</html>`;
+  }
+
+  private renderHitsList(hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }>): string {
+    if (!hits.length) return `<p><i>Keine Treffer.</i></p>`;
+
+    let html = `<ul>`;
+    for (const h of hits) {
+      const cmd = `command:50ohm.openUri?${encodeURIComponent(JSON.stringify([h.uri.toString()]))}`;
+      html += `<li>
+        <a href="${cmd}"><code>${this.escapeHtml(h.title)}</code></a>
+        <span> (IDs: ${h.matchedIds.map(id => `<code>${id}</code>`).join(" ")})</span>
+      </li>`;
+    }
+    html += `</ul>`;
+    return html;
+  }
+
+  // ---------- Data helpers ----------
+
+  private extractIdCandidatesFromFilename(uri: vscode.Uri): string[] {
+    const name = uri.path.split("/").pop() ?? "";
+    const stem = name.replace(/\.png$/i, "");
+    const nums = Array.from(stem.matchAll(/\d+/g)).map(m => m[0]);
+    const candidates = new Set<string>([stem, ...nums]);
+    return Array.from(candidates).filter(Boolean);
+  }
+
+  private async findMarkdownFilesUsingPicture(glob: string, idCandidates: string[]) {
+    const files = await vscode.workspace.findFiles(glob);
+    const hits: Array<{ uri: vscode.Uri; title: string; matchedIds: string[] }> = [];
+    const pictureRe = /\[photo:(\d+):/g;
+
+    for (const uri of files) {
+      const raw = await vscode.workspace.fs.readFile(uri);
+      const txt = Buffer.from(raw).toString("utf8");
+
+      const mTitle = txt.match(/^#\s+(.+)$/m);
+      const title = mTitle?.[1]?.trim() ?? (uri.path.split("/").pop() ?? "md");
+
+      const found = new Set<string>();
+      for (const m of txt.matchAll(pictureRe)) found.add(m[1]);
+
+      const matchedIds = idCandidates.filter(id => found.has(id));
+      if (matchedIds.length > 0) hits.push({ uri, title, matchedIds });
+    }
+
+    hits.sort((a, b) => a.title.localeCompare(b.title));
+    return hits;
+  }
+
+  private async loadAltTextForPng(pngUri: vscode.Uri): Promise<string | null> {
+    const txtUri = pngUri.with({ path: pngUri.path.replace(/\.png$/i, ".txt") });
+    try {
+      const raw = await vscode.workspace.fs.readFile(txtUri);
+      const txt = Buffer.from(raw).toString("utf8").trim();
+      return txt.length ? txt : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+}
+
+
 // This method is called when your extension is deactivated
 export function deactivate() { }
+
+
+function escapeHtml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}

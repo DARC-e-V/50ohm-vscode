@@ -13,7 +13,9 @@
     "categories": [
         "Other"
     ],
-    "activationEvents": [],
+    "activationEvents": [
+        "onCommand:50ohm.openSvgGallery"
+    ],
     "main": "./out/extension.js",
     "contributes": {
         "views": {
@@ -49,6 +51,16 @@
                     }
                 ],
                 "priority": "default"
+            },
+            {
+                "viewType": "50ohm.pngWhitePreview",
+                "displayName": "50Ohm PNG Preview",
+                "selector": [
+                    {
+                        "filenamePattern": "*.png"
+                    }
+                ],
+                "priority": "default"
             }
         ],
         "commands": [
@@ -59,6 +71,14 @@
             {
                 "command": "50ohm.openSvgWhitePreview",
                 "title": "50ohm: Open SVG (White Preview)"
+            },
+            {
+                "command": "50ohm.openPhotoGallery",
+                "title": "50ohm: Open Photo Gallery"
+            },
+            {
+                "command": "50ohm.openPngWhitePreview",
+                "title": "50ohm: Open PNG Preview"
             }
         ]
     },
