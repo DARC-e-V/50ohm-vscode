@@ -27,7 +27,7 @@
                 },
                 {
                     "id": "svgGalleryView",
-                    "name": "Views",
+                    "name": "Tools",
                     "icon": "media/50ohm.svg"
                 }
             ]
@@ -91,6 +91,10 @@
             {
                 "command": "50ohm.openRenderedHtmlVsCode",
                 "title": "50ohm: Open Rendered HTML (VSCode)"
+            },
+            {
+                "command": "50ohm.runContentBuild",
+                "title": "Run Content Build (main.py)"
             }
         ],
         "grammars": [

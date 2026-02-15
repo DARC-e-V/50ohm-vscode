@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as path from "path";
 
 let renderedHtmlPanel: vscode.WebviewPanel | undefined;
+let buildTerminal: vscode.Terminal | undefined;
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -433,23 +434,19 @@ export function activate(context: vscode.ExtensionContext) {
     const svgProvider: vscode.TreeDataProvider<vscode.TreeItem> = {
         getTreeItem: (element) => element,
         getChildren: async () => {
+            const runBuild = new vscode.TreeItem("Run Content Build", vscode.TreeItemCollapsibleState.None);
+            runBuild.iconPath = new vscode.ThemeIcon("play");
+            runBuild.command = { command: "50ohm.runContentBuild", title: "Run Content Build" };
+
             const svgItem = new vscode.TreeItem("Open SVG Gallery", vscode.TreeItemCollapsibleState.None);
             svgItem.iconPath = new vscode.ThemeIcon("file-media");
-            svgItem.command = {
-                command: "50ohm.openSvgGallery",
-                title: "Open SVG Gallery",
-                arguments: []
-            };
+            svgItem.command = { command: "50ohm.openSvgGallery", title: "Open SVG Gallery" };
 
             const photoItem = new vscode.TreeItem("Open Photo Gallery", vscode.TreeItemCollapsibleState.None);
             photoItem.iconPath = new vscode.ThemeIcon("file-media");
-            photoItem.command = {
-                command: "50ohm.openPhotoGallery",
-                title: "Open Photo Gallery",
-                arguments: []
-            };
+            photoItem.command = { command: "50ohm.openPhotoGallery", title: "Open Photo Gallery" };
 
-            return [svgItem, photoItem];
+            return [runBuild, svgItem, photoItem];
         }
     };
 
@@ -755,10 +752,16 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-    vscode.commands.registerCommand("50ohm.openRenderedHtmlVsCode", async (arg?: any) => {
-        await openRenderedHtmlCommand(arg, true);
-    })
-);
+        vscode.commands.registerCommand("50ohm.openRenderedHtmlVsCode", async (arg?: any) => {
+            await openRenderedHtmlCommand(arg, true);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.runContentBuild", async () => {
+            await runContentBuildCommand();
+        })
+    );
 
 }
 
@@ -1524,3 +1527,48 @@ content="
 
     webview.html = html;
 }
+
+async function runContentBuildCommand() {
+  const cfg = vscode.workspace.getConfiguration("50ohm");
+  const buildRepoPath = cfg.get<string>("buildRepoPath");
+
+  if (!buildRepoPath) {
+    vscode.window.showErrorMessage("50ohm.buildRepoPath not set in settings.");
+    return;
+  }
+
+  const script = path.join(buildRepoPath, "main.py");
+
+  const py =
+    process.platform === "win32"
+      ? path.join(buildRepoPath, ".venv", "Scripts", "python.exe")
+      : path.join(buildRepoPath, ".venv", "bin", "python");
+
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(py));
+  } catch {
+    vscode.window.showErrorMessage(`Python venv not found: ${py}`);
+    return;
+  }
+
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(script));
+  } catch {
+    vscode.window.showErrorMessage(`main.py not found: ${script}`);
+    return;
+  }
+
+  if (!buildTerminal) {
+    buildTerminal = vscode.window.createTerminal({
+      name: "50ohm Build",
+      cwd: buildRepoPath,
+    });
+    vscode.window.onDidCloseTerminal((t) => {
+      if (t === buildTerminal) buildTerminal = undefined;
+    });
+  }
+
+  buildTerminal.show(true);
+  buildTerminal.sendText(`"${py}" "${script}"`);
+}
+
