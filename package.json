@@ -2,7 +2,7 @@
     "name": "50ohm",
     "displayName": "50ohm Editor",
     "description": "Plugin to Edit 50ohm Contents",
-    "version": "0.0.7",
+    "version": "0.0.9",
     "engines": {
         "vscode": "^1.108.1"
     },
