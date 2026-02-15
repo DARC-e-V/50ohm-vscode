@@ -17,6 +17,8 @@ This extension is distributed as a **VSIX package** via GitHub Releases.
 
 After installation, a **50ohm** icon appears in the Activity Bar.
 
+In Settings, search for 50ohm and configure the path to the [50ohm generator](https://github.com/DARC-e-V/50ohm) and the default indent for the books (e.g., NEA for German contents).
+
 ---
 
 ### Install via Command Line
