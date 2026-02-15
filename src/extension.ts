@@ -357,14 +357,14 @@ export function activate(context: vscode.ExtensionContext) {
             if ((element as any).nodeType === "chapter") {
                 const bookUri = element.resourceUri!;
                 const chapterIndex = (element as any).chapterIndex as number;
-                const bookIdent = (element as any).bookIdent as string; 
+                const bookIdent = (element as any).bookIdent as string;
 
                 const slidesFolder = new vscode.TreeItem("Slides", vscode.TreeItemCollapsibleState.Collapsed);
                 (slidesFolder as any).nodeType = "chapterFolder";
                 slidesFolder.resourceUri = bookUri;
                 (slidesFolder as any).chapterIndex = chapterIndex;
                 (slidesFolder as any).kind = "slide";
-                (slidesFolder as any).bookIdent = bookIdent; 
+                (slidesFolder as any).bookIdent = bookIdent;
 
                 const sectionsFolder = new vscode.TreeItem("Sections", vscode.TreeItemCollapsibleState.Collapsed);
                 (sectionsFolder as any).nodeType = "chapterFolder";
@@ -401,11 +401,11 @@ export function activate(context: vscode.ExtensionContext) {
 
                     const item = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.None);
 
-                    item.resourceUri = uri; 
-                    (item as any).nodeType = "tocLeaf"; 
-                    (item as any).ident = ident;        
-                    (item as any).kind = kind;          
-                    (item as any).bookIdent = (element as any).bookIdent as string; 
+                    item.resourceUri = uri;
+                    (item as any).nodeType = "tocLeaf";
+                    (item as any).ident = ident;
+                    (item as any).kind = kind;
+                    (item as any).bookIdent = (element as any).bookIdent as string;
 
                     item.iconPath = kind === "slide"
                         ? new vscode.ThemeIcon("screen-full")
@@ -1370,12 +1370,6 @@ function normalizeForSearch(s: string): string {
         .trim();
 }
 
-function getBuildRepoPath(): string {
-    const cfg = vscode.workspace.getConfiguration("50ohm");
-    const p = String(cfg.get("buildRepoPath", "") || "").trim();
-    return p;
-}
-
 async function openRenderedHtmlCommand(arg?: any, openInVsCode = false) {
 
     const config = vscode.workspace.getConfiguration("50ohm");
@@ -1411,8 +1405,7 @@ async function openRenderedHtmlCommand(arg?: any, openInVsCode = false) {
     // TOC kann bookIdent am TreeItem mitgeben, Explorer nimmt defaultBookIdent
     const bookIdent = (arg && arg.bookIdent) ? String(arg.bookIdent) : defaultBookIdent;
 
-    const path = require("path");
-    const htmlPath = path.join(buildRepoPath, "build", `${bookIdent}_${ident}.html`);
+    const htmlPath = buildRenderedHtmlPath(buildRepoPath, bookIdent, ident, mdUri);
     const htmlUri = vscode.Uri.file(htmlPath);
 
     try {
@@ -1444,18 +1437,6 @@ function resolveUriFromArg(arg: any): vscode.Uri | undefined {
     if (typeof arg.fsPath === "string") return vscode.Uri.file(arg.fsPath);
 
     return undefined;
-}
-
-
-
-function extractUriFromCommandArg(arg: any): vscode.Uri | null {
-    if (!arg) { return null; }
-
-    if (arg instanceof vscode.Uri) { return arg; }
-    if (typeof arg === "object" && arg.resourceUri instanceof vscode.Uri) { return arg.resourceUri; }
-    if (typeof arg === "object" && arg.uri instanceof vscode.Uri) { return arg.uri; }
-
-    return null;
 }
 
 async function openRenderedHtmlInWebview(htmlPath: string, title: string) {
@@ -1529,46 +1510,63 @@ content="
 }
 
 async function runContentBuildCommand() {
-  const cfg = vscode.workspace.getConfiguration("50ohm");
-  const buildRepoPath = cfg.get<string>("buildRepoPath");
+    const cfg = vscode.workspace.getConfiguration("50ohm");
+    const buildRepoPath = cfg.get<string>("buildRepoPath");
 
-  if (!buildRepoPath) {
-    vscode.window.showErrorMessage("50ohm.buildRepoPath not set in settings.");
-    return;
-  }
+    if (!buildRepoPath) {
+        vscode.window.showErrorMessage("50ohm.buildRepoPath not set in settings.");
+        return;
+    }
 
-  const script = path.join(buildRepoPath, "main.py");
+    const script = path.join(buildRepoPath, "main.py");
 
-  const py =
-    process.platform === "win32"
-      ? path.join(buildRepoPath, ".venv", "Scripts", "python.exe")
-      : path.join(buildRepoPath, ".venv", "bin", "python");
+    const py =
+        process.platform === "win32"
+            ? path.join(buildRepoPath, ".venv", "Scripts", "python.exe")
+            : path.join(buildRepoPath, ".venv", "bin", "python");
 
-  try {
-    await vscode.workspace.fs.stat(vscode.Uri.file(py));
-  } catch {
-    vscode.window.showErrorMessage(`Python venv not found: ${py}`);
-    return;
-  }
+    try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(py));
+    } catch {
+        vscode.window.showErrorMessage(`Python venv not found: ${py}`);
+        return;
+    }
 
-  try {
-    await vscode.workspace.fs.stat(vscode.Uri.file(script));
-  } catch {
-    vscode.window.showErrorMessage(`main.py not found: ${script}`);
-    return;
-  }
+    try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(script));
+    } catch {
+        vscode.window.showErrorMessage(`main.py not found: ${script}`);
+        return;
+    }
 
-  if (!buildTerminal) {
-    buildTerminal = vscode.window.createTerminal({
-      name: "50ohm Build",
-      cwd: buildRepoPath,
-    });
-    vscode.window.onDidCloseTerminal((t) => {
-      if (t === buildTerminal) buildTerminal = undefined;
-    });
-  }
+    if (!buildTerminal) {
+        buildTerminal = vscode.window.createTerminal({
+            name: "50ohm Build",
+            cwd: buildRepoPath,
+        });
+        vscode.window.onDidCloseTerminal((t) => {
+            if (t === buildTerminal) buildTerminal = undefined;
+        });
+    }
 
-  buildTerminal.show(true);
-  buildTerminal.sendText(`"${py}" "${script}"`);
+    buildTerminal.show(true);
+    buildTerminal.sendText(`"${py}" "${script}"`);
 }
 
+function isSolutionsMd(uri: vscode.Uri): boolean {
+    // robust gegen Windows/Unix separator
+    const p = uri.fsPath;
+    const needle = path.join("contents", "solutions") + path.sep;
+    return p.includes(needle) || p.endsWith(path.join("contents", "solutions"));
+}
+
+function buildRenderedHtmlPath(buildRepoPath: string, bookIdent: string, ident: string, mdUri: vscode.Uri): string {
+    const isSol = isSolutionsMd(mdUri);
+
+    // ✅ HIER dein Namensschema zentral
+    const file = isSol
+        ? `${ident}.html`
+        : `${bookIdent}_${ident}.html`;
+
+    return path.join(buildRepoPath, "build", file);
+}
