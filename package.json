@@ -79,6 +79,18 @@
             {
                 "command": "50ohm.openPngWhitePreview",
                 "title": "50ohm: Open PNG Preview"
+            },
+            {
+                "command": "50ohm.openQuestionSearch",
+                "title": "50ohm: Question Search"
+            },
+            {
+                "command": "50ohm.openRenderedHtml",
+                "title": "50ohm: Open Rendered HTML (Browser)"
+            },
+            {
+                "command": "50ohm.openRenderedHtmlVsCode",
+                "title": "50ohm: Open Rendered HTML (VSCode)"
             }
         ],
         "grammars": [
@@ -89,7 +101,49 @@
                     "text.html.markdown"
                 ]
             }
-        ]
+        ],
+        "configuration": {
+            "title": "50ohm",
+            "properties": {
+                "50ohm.buildRepoPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute path to the build repo root. The extension will open HTML files from ${buildRepoPath}/build/<BOOK>_<IDENT>.html"
+                },
+                "50ohm.defaultBookIdent": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Book prefix used for rendered HTML files (e.g. NEA)."
+                }
+            }
+        },
+        "menus": {
+            "explorer/context": [
+                {
+                    "command": "50ohm.openRenderedHtml",
+                    "when": "resourceExtname == .md",
+                    "group": "navigation"
+                },
+                {
+                    "command": "50ohm.openRenderedHtmlVsCode",
+                    "when": "resourceExtname == .md",
+                    "group": "navigation"
+                }
+
+            ],
+            "view/item/context": [
+                {
+                    "command": "50ohm.openRenderedHtml",
+                    "when": "view == bookTocView",
+                    "group": "navigation"
+                },
+                {
+                    "command": "50ohm.openRenderedHtmlVsCode",
+                    "when": "view == bookTocView",
+                    "group": "navigation"
+                }
+            ]
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",

@@ -1,6 +1,9 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as path from "path";
+
+let renderedHtmlPanel: vscode.WebviewPanel | undefined;
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -316,7 +319,8 @@ export function activate(context: vscode.ExtensionContext) {
                     const item = new vscode.TreeItem(bookKey, vscode.TreeItemCollapsibleState.Collapsed);
                     item.resourceUri = uri;               // merken: welches JSON
                     (item as any).nodeType = "book";      // merken: Typ
-                    item.iconPath = new vscode.ThemeIcon("book")
+                    (item as any).bookIdent = bookKey;
+                    item.iconPath = new vscode.ThemeIcon("book");
                     return item;
                 });
 
@@ -337,10 +341,13 @@ export function activate(context: vscode.ExtensionContext) {
                     const rawTitle = ch?.title ?? "Ohne Titel";
                     const title = `${idx + 1}. ${rawTitle}`;
 
+                    const bookIdent = (element as any).bookIdent as string; // <— NEU
+
                     const item = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.Collapsed);
                     item.resourceUri = bookUri;              // weiterhin das Buch-JSON
                     (item as any).nodeType = "chapter";
                     (item as any).chapterIndex = idx;        // welcher Chapter im JSON
+                    (item as any).bookIdent = bookIdent; // <— NEU
                     return item;
                 });
             }
@@ -349,18 +356,21 @@ export function activate(context: vscode.ExtensionContext) {
             if ((element as any).nodeType === "chapter") {
                 const bookUri = element.resourceUri!;
                 const chapterIndex = (element as any).chapterIndex as number;
+                const bookIdent = (element as any).bookIdent as string; 
 
                 const slidesFolder = new vscode.TreeItem("Slides", vscode.TreeItemCollapsibleState.Collapsed);
                 (slidesFolder as any).nodeType = "chapterFolder";
                 slidesFolder.resourceUri = bookUri;
                 (slidesFolder as any).chapterIndex = chapterIndex;
                 (slidesFolder as any).kind = "slide";
+                (slidesFolder as any).bookIdent = bookIdent; 
 
                 const sectionsFolder = new vscode.TreeItem("Sections", vscode.TreeItemCollapsibleState.Collapsed);
                 (sectionsFolder as any).nodeType = "chapterFolder";
                 sectionsFolder.resourceUri = bookUri;
                 (sectionsFolder as any).chapterIndex = chapterIndex;
                 (sectionsFolder as any).kind = "section";
+                (sectionsFolder as any).bookIdent = bookIdent;
 
                 return [slidesFolder, sectionsFolder];
             }
@@ -389,6 +399,13 @@ export function activate(context: vscode.ExtensionContext) {
                     const uri = vscode.Uri.joinPath(ws, "contents", folderName, `${ident}.md`);
 
                     const item = new vscode.TreeItem(title, vscode.TreeItemCollapsibleState.None);
+
+                    item.resourceUri = uri; 
+                    (item as any).nodeType = "tocLeaf"; 
+                    (item as any).ident = ident;        
+                    (item as any).kind = kind;          
+                    (item as any).bookIdent = (element as any).bookIdent as string; 
+
                     item.iconPath = kind === "slide"
                         ? new vscode.ThemeIcon("screen-full")
                         : new vscode.ThemeIcon("note");
@@ -730,6 +747,19 @@ export function activate(context: vscode.ExtensionContext) {
             new DarcdownLinkProvider()
         )
     );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("50ohm.openRenderedHtml", async (arg?: any) => {
+            await openRenderedHtmlCommand(arg);
+        })
+    );
+
+    context.subscriptions.push(
+    vscode.commands.registerCommand("50ohm.openRenderedHtmlVsCode", async (arg?: any) => {
+        await openRenderedHtmlCommand(arg, true);
+    })
+);
+
 }
 
 /**
@@ -1337,3 +1367,160 @@ function normalizeForSearch(s: string): string {
         .trim();
 }
 
+function getBuildRepoPath(): string {
+    const cfg = vscode.workspace.getConfiguration("50ohm");
+    const p = String(cfg.get("buildRepoPath", "") || "").trim();
+    return p;
+}
+
+async function openRenderedHtmlCommand(arg?: any, openInVsCode = false) {
+
+    const config = vscode.workspace.getConfiguration("50ohm");
+
+    const buildRepoPath = config.get<string>("buildRepoPath");
+    if (!buildRepoPath) {
+        vscode.window.showErrorMessage("50ohm.buildRepoPath not set in settings.");
+        return;
+    }
+
+    // DAS ist jetzt dein fixer Buch-Ident aus Settings (z.B. "NEA")
+    const defaultBookIdent = config.get<string>("defaultBookIdent");
+    if (!defaultBookIdent) {
+        vscode.window.showErrorMessage("50ohm.defaultBookIdent not set in settings (e.g. 'NEA').");
+        return;
+    }
+
+    // -------- resolve mdUri from different arg shapes --------
+    const mdUri = resolveUriFromArg(arg);
+    if (!mdUri) {
+        vscode.window.showErrorMessage("Could not resolve file URI from context menu.");
+        return;
+    }
+
+    // ident = foo aus foo.md
+    const filename = mdUri.path.split("/").pop() ?? "";
+    const ident = filename.replace(/\.md$/i, "");
+    if (!ident) {
+        vscode.window.showErrorMessage("Could not resolve ident from file name.");
+        return;
+    }
+
+    // TOC kann bookIdent am TreeItem mitgeben, Explorer nimmt defaultBookIdent
+    const bookIdent = (arg && arg.bookIdent) ? String(arg.bookIdent) : defaultBookIdent;
+
+    const path = require("path");
+    const htmlPath = path.join(buildRepoPath, "build", `${bookIdent}_${ident}.html`);
+    const htmlUri = vscode.Uri.file(htmlPath);
+
+    try {
+        await vscode.workspace.fs.stat(htmlUri);
+    } catch {
+        vscode.window.showErrorMessage(`HTML not found: ${htmlPath}`);
+        return;
+    }
+
+    if (openInVsCode) {
+        await openRenderedHtmlInWebview(htmlPath, `Rendered HTML: ${ident}`);
+        return;
+    }
+
+    await vscode.env.openExternal(vscode.Uri.file(htmlPath));
+}
+
+// Accepts: vscode.Uri | {resourceUri} | {uri} | {fsPath} | [uri]
+function resolveUriFromArg(arg: any): vscode.Uri | undefined {
+    if (!arg) return undefined;
+
+    if (arg instanceof vscode.Uri) return arg;
+
+    if (Array.isArray(arg) && arg[0] instanceof vscode.Uri) return arg[0];
+
+    if (arg.resourceUri instanceof vscode.Uri) return arg.resourceUri;
+    if (arg.uri instanceof vscode.Uri) return arg.uri;
+
+    if (typeof arg.fsPath === "string") return vscode.Uri.file(arg.fsPath);
+
+    return undefined;
+}
+
+
+
+function extractUriFromCommandArg(arg: any): vscode.Uri | null {
+    if (!arg) { return null; }
+
+    if (arg instanceof vscode.Uri) { return arg; }
+    if (typeof arg === "object" && arg.resourceUri instanceof vscode.Uri) { return arg.resourceUri; }
+    if (typeof arg === "object" && arg.uri instanceof vscode.Uri) { return arg.uri; }
+
+    return null;
+}
+
+async function openRenderedHtmlInWebview(htmlPath: string, title: string) {
+    const htmlUri = vscode.Uri.file(htmlPath);
+
+    // Wichtig: base/localResourceRoots sollen auf den BUILD-root zeigen,
+    // nicht nur auf den Ordner der HTML-Datei (damit assets überall funktionieren)
+    // -> wenn du schon einen buildRoot hast, nimm den hier statt dirname(htmlPath)
+    const buildRootUri = vscode.Uri.file(path.dirname(htmlPath));
+
+    if (!renderedHtmlPanel) {
+        renderedHtmlPanel = vscode.window.createWebviewPanel(
+            "50ohm.renderedHtml",
+            title,
+            vscode.ViewColumn.Beside,
+            {
+                enableScripts: true,
+                localResourceRoots: [buildRootUri],
+                retainContextWhenHidden: true, // optional: fühlt sich "browseriger" an
+            }
+        );
+
+        renderedHtmlPanel.onDidDispose(() => {
+            renderedHtmlPanel = undefined;
+        });
+    } else {
+        // Panel existiert -> nur nach vorne holen
+        renderedHtmlPanel.reveal(vscode.ViewColumn.Beside, true);
+        renderedHtmlPanel.title = title;
+
+        // localResourceRoots kann man NICHT nachträglich ändern.
+        // Wenn dein HTML Assets außerhalb von buildRoot braucht: Root größer wählen (z.B. .../build).
+    }
+
+    const webview = renderedHtmlPanel.webview;
+
+    // HTML laden
+    const raw = await vscode.workspace.fs.readFile(htmlUri);
+    let html = Buffer.from(raw).toString("utf8");
+
+    // base href (relative assets)
+    const baseHref = webview.asWebviewUri(buildRootUri).toString() + "/";
+
+    if (!/<base\b/i.test(html)) {
+        if (/<head\b[^>]*>/i.test(html)) {
+            html = html.replace(/<head\b[^>]*>/i, (m) => `${m}\n<base href="${baseHref}">`);
+        } else {
+            html = `<head><base href="${baseHref}"></head>\n` + html;
+        }
+    }
+
+    // CSP (damit CSS/JS/Images funktionieren)
+    const csp = `
+<meta http-equiv="Content-Security-Policy"
+content="
+  default-src 'none';
+  img-src ${webview.cspSource} data: https:;
+  style-src ${webview.cspSource} 'unsafe-inline' https:;
+  script-src ${webview.cspSource} 'unsafe-inline' https:;
+  font-src ${webview.cspSource} data: https:;
+">
+`.trim();
+
+    if (/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i.test(html)) {
+        html = html.replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i, csp);
+    } else if (/<head\b[^>]*>/i.test(html)) {
+        html = html.replace(/<head\b[^>]*>/i, (m) => `${m}\n${csp}`);
+    }
+
+    webview.html = html;
+}
