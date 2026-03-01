@@ -6,6 +6,10 @@ import * as path from "path";
 let renderedHtmlPanel: vscode.WebviewPanel | undefined;
 let buildTerminal: vscode.Terminal | undefined;
 
+let renderedHtmlWatcher: vscode.FileSystemWatcher | undefined;
+let renderedHtmlLastPath: string | undefined;
+let renderedHtmlReloadTimer: NodeJS.Timeout | undefined;
+
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -1388,9 +1392,24 @@ async function openRenderedHtmlCommand(arg?: any, openInVsCode = false) {
     }
 
     // -------- resolve mdUri from different arg shapes --------
-    const mdUri = resolveUriFromArg(arg);
+    let mdUri = resolveUriFromArg(arg);
+
+    // Command Palette: kein arg -> nimm aktive Datei
     if (!mdUri) {
-        vscode.window.showErrorMessage("Could not resolve file URI from context menu.");
+        const active = vscode.window.activeTextEditor?.document?.uri;
+        if (active) {
+            mdUri = active;
+        }
+    }
+
+    if (!mdUri) {
+        vscode.window.showErrorMessage("No active file and no file provided.");
+        return;
+    }
+
+    // Optional: nur .md zulassen (Palette kann sonst auf allem laufen)
+    if (mdUri.scheme !== "file" || !mdUri.fsPath.toLowerCase().endsWith(".md")) {
+        vscode.window.showErrorMessage("Active file is not a .md file.");
         return;
     }
 
@@ -1461,6 +1480,13 @@ async function openRenderedHtmlInWebview(htmlPath: string, title: string) {
 
         renderedHtmlPanel.onDidDispose(() => {
             renderedHtmlPanel = undefined;
+
+            renderedHtmlWatcher?.dispose();
+            renderedHtmlWatcher = undefined;
+            renderedHtmlLastPath = undefined;
+
+            if (renderedHtmlReloadTimer){clearTimeout(renderedHtmlReloadTimer);}
+            renderedHtmlReloadTimer = undefined;
         });
     } else {
         // Panel existiert -> nur nach vorne holen
@@ -1507,6 +1533,43 @@ content="
     }
 
     webview.html = html;
+
+    // ✅ Auto-Reload wenn Datei geändert wird
+    setRenderedHtmlAutoReload(htmlPath, async () => {
+        // wichtig: nicht recursively neue watcher erstellen, wir reloaden nur
+        const raw2 = await vscode.workspace.fs.readFile(vscode.Uri.file(htmlPath));
+        let html2 = Buffer.from(raw2).toString("utf8");
+
+        const baseHref2 = webview.asWebviewUri(buildRootUri).toString() + "/";
+
+        if (!/<base\b/i.test(html2)) {
+            if (/<head\b[^>]*>/i.test(html2)) {
+                html2 = html2.replace(/<head\b[^>]*>/i, (m) => `${m}\n<base href="${baseHref2}">`);
+            } else {
+                html2 = `<head><base href="${baseHref2}"></head>\n` + html2;
+            }
+        }
+
+        // CSP wieder reinpatchen (wie vorher)
+        const csp2 = `
+<meta http-equiv="Content-Security-Policy"
+content="
+  default-src 'none';
+  img-src ${webview.cspSource} data: https:;
+  style-src ${webview.cspSource} 'unsafe-inline' https:;
+  script-src ${webview.cspSource} 'unsafe-inline' https:;
+  font-src ${webview.cspSource} data: https:;
+">
+`.trim();
+
+        if (/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i.test(html2)) {
+            html2 = html2.replace(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]*>/i, csp2);
+        } else if (/<head\b[^>]*>/i.test(html2)) {
+            html2 = html2.replace(/<head\b[^>]*>/i, (m) => `${m}\n${csp2}`);
+        }
+
+        webview.html = html2;
+    });
 }
 
 async function runContentBuildCommand() {
@@ -1569,4 +1632,31 @@ function buildRenderedHtmlPath(buildRepoPath: string, bookIdent: string, ident: 
         : `${bookIdent}_${ident}.html`;
 
     return path.join(buildRepoPath, "build", file);
+}
+
+function setRenderedHtmlAutoReload(htmlPath: string, reload: () => Promise<void>) {
+    // nur umhängen wenn sich die Datei wirklich geändert hat
+    if (renderedHtmlLastPath === htmlPath && renderedHtmlWatcher) return;
+    renderedHtmlLastPath = htmlPath;
+
+    // alten watcher weg
+    renderedHtmlWatcher?.dispose();
+    renderedHtmlWatcher = undefined;
+
+    const pattern = new vscode.RelativePattern(path.dirname(htmlPath), path.basename(htmlPath));
+    renderedHtmlWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+    const trigger = () => {
+        // debounce (Build schreibt oft mehrfach)
+        if (renderedHtmlReloadTimer) clearTimeout(renderedHtmlReloadTimer);
+        renderedHtmlReloadTimer = setTimeout(() => {
+            reload().catch((e) => console.warn("[50ohm] auto-reload failed:", e));
+        }, 200);
+    };
+
+    renderedHtmlWatcher.onDidChange(trigger);
+    renderedHtmlWatcher.onDidCreate(trigger);
+    renderedHtmlWatcher.onDidDelete(() => {
+        vscode.window.showWarningMessage(`Rendered HTML deleted: ${htmlPath}`);
+    });
 }
